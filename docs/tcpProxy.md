@@ -1,10 +1,15 @@
 # TCP Proxy Implementation
 
+> **Versão/Tag:** `v0.1.0-tcp-proxy`  
+> **Objetivo desta Fase:** Estabelecer a fundação de rede do projeto. Antes de podermos distribuir carga de forma inteligente (Load Balancing), precisamos de ser capazes de receber uma conexão TCP e encaminhá-la eficientemente para um destino fixo usando I/O assíncrono.
+
+Para este Load Balancer de Layer 4, a fundação técnica começa com um proxy TCP funcional que utiliza I/O assíncrono para gerir múltiplas conexões concorrentes. Abaixo encontra-se uma análise técnica detalhada dos módulos centrais do projeto **nesta fase inicial**.
+
 For this Layer 4 Load Balancer, the technical foundation begins with a functional TCP proxy that utilizes asynchronous I/O to manage multiple concurrent connections. Below is a detailed technical analysis of the project's core modules.
 
 ## Section 1: Data Models ([`src/models.rs`](../src/models.rs))
 
-We define a public struct named `Backend` with a public string field named `addr`.
+Nesta etapa, o nosso modelo de dados é propositadamente minimalista. Definimos uma `struct` pública chamada `Backend` com um campo de texto público chamado `addr`.
 
 ```rust
 #[derive(Debug, Clone)]
@@ -23,13 +28,21 @@ The core logic is implemented in the `handle_connection` function.
 - **Asynchronous TCP:** We use [`tokio::net::TcpStream`](https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html), which is the asynchronous version of a TCP connection. It allows reading and writing bytes without freezing the CPU thread.
 - **Atomic Reference Counter:** We use [`std::sync::Arc`](https://doc.rust-lang.org/std/sync/struct.Arc.html). Because Rust enforces strict ownership rules, sharing the list of backends across thousands of concurrent tasks requires `Arc`. It places the data on the Heap and hands out thread-safe reference tickets.
 - **Error Handling:** The [`handle_connection`](../src/proxy.rs#L5-L8) function is marked as `async`, allowing it to suspend execution while waiting for network packets. It returns a `Result` with a dynamic `Error` box, which is Rust's robust error handling.
+- **Backend Connection:** We use [`TcpStream::connect`](../src/proxy.rs#L10) to establish an asynchronous connection to the target server. For now, it statically selects the first available backend.
 
 ```rust
 pub async fn handle_connection(
     mut client_stream: TcpStream,
     backends: Arc<Vec<Backend>>
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // ... logic ...
+    let target_addr = &backends[0].addr;
+    let mut backend_stream = TcpStream::connect(target_addr).await?;
+
+    let (from_client, _from_backend) = tokio::io::copy_bidirectional(
+        &mut client_stream,
+        &mut backend_stream
+    ).await?;
+    Ok(())
 }
 ```
 
@@ -40,6 +53,6 @@ pub async fn handle_connection(
 The listener engine orchestrates the incoming connections.
 
 - **Async Binding:** We use `TcpListener::bind` to open the network port asynchronously. If a client is slow to connect, it will not block other operations.
-- **Accept Loop:** We use an explicit infinite loop optimized by the compiler. Calling [`listener.accept().await`](../src/main.rs#L19) pauses the loop until a new TCP connection arrives.
+- **Accept Loop:** We use an explicit infinite loop optimized by the compiler. Calling [`listener.accept().await`](../src/main.rs#L19) pauses the loop until a new TCP connection arrives, providing both the stream and the client's IP address.
 - **Efficient Cloning:** We use `Arc::clone` to cheaply increment the atomic reference counter; it does not clone the entire list of servers, only the pointer to it.
 - **Lightweight Tasks:** Finally, [`tokio::spawn`](../src/main.rs#L23) creates a lightweight asynchronous task (green thread) for the specific client. The `move` keyword forces the task to take ownership of the client stream and backend reference, guaranteeing memory safety across concurrency boundaries.
