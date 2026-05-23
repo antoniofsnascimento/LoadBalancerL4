@@ -1,0 +1,7 @@
+target/
+.git/
+.idea/
+docs/
+*.md
+LICENSE
+comandos_defesa.txt
