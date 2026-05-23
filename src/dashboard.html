@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Load Balancer UEFI Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #0b0c10;
+            --panel-bg: #1f2833;
+            --primary-accent: #66fcf1;
+            --secondary-accent: #45a29e;
+            --text-color: #c5c6c7;
+            --danger: #ff4c4c;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Consolas', 'Courier New', monospace;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--primary-accent);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            color: var(--primary-accent);
+            margin: 0;
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .status-badge {
+            background-color: rgba(102, 252, 241, 0.1);
+            color: var(--primary-accent);
+            padding: 5px 15px;
+            border: 1px solid var(--primary-accent);
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background-color: var(--panel-bg);
+            border: 1px solid #333;
+            border-left: 4px solid var(--primary-accent);
+            padding: 20px;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            transition: transform 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+        }
+
+        .card h3 {
+            margin-top: 0;
+            color: var(--secondary-accent);
+            font-size: 1rem;
+            text-transform: uppercase;
+        }
+
+        .card .value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #fff;
+            margin: 10px 0;
+        }
+
+        .table-container {
+            width: 100%;
+            max-width: 1200px;
+            background-color: var(--panel-bg);
+            border-radius: 4px;
+            padding: 20px;
+            box-sizing: border-box;
+            border: 1px solid #333;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #333;
+        }
+
+        th {
+            color: var(--secondary-accent);
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .live-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background-color: var(--primary-accent);
+            border-radius: 50%;
+            margin-right: 10px;
+            animation: pulse 1.5s infinite;
+        }
+
+        .live-dot.offline {
+            background-color: var(--danger);
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .chart-bar {
+            height: 8px;
+            background-color: #333;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .chart-fill {
+            height: 100%;
+            background-color: var(--primary-accent);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        /* --- UI controls (Phase: dashboard automation) --- */
+        .controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .algo-toggle {
+            display: inline-flex;
+            border: 1px solid var(--primary-accent);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .algo-toggle button {
+            background: transparent;
+            color: var(--text-color);
+            border: none;
+            padding: 6px 14px;
+            font-family: inherit;
+            font-size: 0.85rem;
+            letter-spacing: 1px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: background-color 0.15s;
+        }
+        .algo-toggle button.active {
+            background-color: var(--primary-accent);
+            color: var(--bg-color);
+            font-weight: bold;
+        }
+        .algo-toggle button:not(.active):hover {
+            background-color: rgba(102, 252, 241, 0.15);
+        }
+        .btn-reset {
+            background: transparent;
+            color: var(--danger);
+            border: 1px solid var(--danger);
+            border-radius: 4px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn-reset:hover {
+            background-color: rgba(255, 76, 76, 0.15);
+        }
+        .weight-input {
+            width: 60px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid #444;
+            border-radius: 3px;
+            padding: 4px 6px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            text-align: center;
+        }
+        .weight-input:focus {
+            outline: none;
+            border-color: var(--primary-accent);
+            box-shadow: 0 0 0 1px var(--primary-accent);
+        }
+        .save-mark {
+            display: inline-block;
+            margin-left: 6px;
+            font-size: 0.85rem;
+            min-width: 14px;
+        }
+        .save-mark.ok    { color: var(--primary-accent); }
+        .save-mark.err   { color: var(--danger); }
+        .save-mark.busy  { color: var(--secondary-accent); }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1><span class="live-dot"></span> Load Balancer L4 - Dashboard</h1>
+        <div class="controls">
+            <div class="algo-toggle" id="algo-toggle">
+                <button type="button" data-alg="RoundRobin">RR</button>
+                <button type="button" data-alg="WeightedRoundRobin">WRR</button>
+            </div>
+            <button type="button" class="btn-reset" id="btn-reset" title="Restore startup defaults">↻ Reset</button>
+        </div>
+    </div>
+
+    <div class="dashboard-grid">
+        <div class="card">
+            <h3>Throughput (CPS)</h3>
+            <div class="value" id="val-cps">0</div>
+            <div style="font-size:0.8em;color:var(--secondary-accent)">new connections/sec · rolling 1s window</div>
+        </div>
+        <div class="card">
+            <h3>Active Connections</h3>
+            <div class="value" id="val-active">0</div>
+            <div style="font-size:0.8em;color:var(--secondary-accent)">peak in last 1s: <span id="val-active-peak">0</span></div>
+        </div>
+        <div class="card">
+            <h3>Total Connections Accepted</h3>
+            <div class="value" id="val-total">0</div>
+        </div>
+        <div class="card">
+            <h3>Data Transferred</h3>
+            <div class="value" id="val-bytes">0 B</div>
+            <div style="font-size:0.8em;color:var(--secondary-accent)"><span id="val-bps">0 B/s</span></div>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <h3 style="color: var(--secondary-accent); margin-top: 0;">BACKEND NODES TOPOLOGY</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Node Address</th>
+                    <th>Weight</th>
+                    <th>Health</th>
+                    <th>Active</th>
+                    <th>CPS</th>
+                    <th>Total Conns</th>
+                    <th>Data (Bytes)</th>
+                    <th>Load Distribution</th>
+                </tr>
+            </thead>
+            <tbody id="backends-body">
+                <!-- Dynamically populated -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        function formatBytes(bytes, decimals = 2) {
+            if (!+bytes) return '0 Bytes';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+        }
+
+        // Rolling state across polls — used to compute deltas/RPS/BPS.
+        let prev = null;          // { ts, totalConns, totalBytes, perBackend: {addr: {conns, bytes}} }
+        let activePeak = 0;       // peak active connections seen in the last 1s window
+        let activePeakResetAt = 0;
+
+        // Per-address state for editable cells. Lets us:
+        //   - reuse the same <input> across polls (no flicker, no focus theft)
+        //   - keep a per-row save indicator and a debounce timer
+        const rowState = new Map(); // addr -> { tr, input, mark, debounce }
+
+        // ---- API helpers ------------------------------------------------
+        async function apiPost(url, body) {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: body ? {'Content-Type': 'application/json'} : {},
+                body: body ? JSON.stringify(body) : undefined,
+            });
+            if (!res.ok) {
+                let msg = `${res.status}`;
+                try { const j = await res.json(); msg = j.error || msg; } catch {}
+                throw new Error(msg);
+            }
+        }
+
+        function setMark(mark, state, label = '') {
+            if (!mark) return;
+            mark.className = 'save-mark ' + state;
+            mark.textContent = label || ({busy:'…', ok:'✓', err:'✗', '':''}[state] ?? '');
+        }
+
+        async function commitWeight(addr, weight, mark) {
+            setMark(mark, 'busy');
+            try {
+                await apiPost('/api/weight', { addr, weight });
+                setMark(mark, 'ok');
+                // Fade the tick after a moment.
+                setTimeout(() => setMark(mark, ''), 1200);
+            } catch (e) {
+                setMark(mark, 'err', '✗');
+                mark.title = String(e.message || e);
+            }
+        }
+
+        // ---- Algorithm toggle ------------------------------------------
+        document.querySelectorAll('#algo-toggle button').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const alg = btn.dataset.alg;
+                try {
+                    await apiPost('/api/algorithm', { algorithm: alg });
+                    // Optimistic highlight; the next poll will confirm.
+                    document.querySelectorAll('#algo-toggle button').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                } catch (e) {
+                    alert('Failed to switch algorithm: ' + e.message);
+                }
+            });
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', async () => {
+            if (!confirm('Reset all weights and algorithm to startup defaults?')) return;
+            try {
+                await apiPost('/api/reset');
+            } catch (e) {
+                alert('Reset failed: ' + e.message);
+            }
+        });
+
+        async function fetchTelemetry() {
+            try {
+                const res = await fetch('/api/telemetry');
+                const data = await res.json();
+                const now = performance.now();
+
+                // ---- Algorithm toggle: reflect server truth ----
+                document.querySelectorAll('#algo-toggle button').forEach(b => {
+                    b.classList.toggle('active', b.dataset.alg === data.algorithm);
+                });
+
+                // Active connections + 1s peak.
+                const active = data.global.active_connections;
+                if (now - activePeakResetAt > 1000) {
+                    activePeak = active;
+                    activePeakResetAt = now;
+                } else if (active > activePeak) {
+                    activePeak = active;
+                }
+                document.getElementById('val-active').innerText = active;
+                document.getElementById('val-active-peak').innerText = activePeak;
+
+                document.getElementById('val-total').innerText = data.global.total_connections;
+                document.getElementById('val-bytes').innerText = formatBytes(data.global.bytes_transferred);
+
+                // CPS / BPS — derived from deltas between two polls.
+                let cps = 0, bps = 0;
+                if (prev) {
+                    const dt = (now - prev.ts) / 1000;
+                    if (dt > 0) {
+                        cps = Math.max(0, Math.round((data.global.total_connections - prev.totalConns) / dt));
+                        bps = Math.max(0, (data.global.bytes_transferred - prev.totalBytes) / dt);
+                    }
+                }
+                document.getElementById('val-cps').innerText = cps;
+                document.getElementById('val-bps').innerText = formatBytes(bps) + '/s';
+
+                // ---- Per-backend table ----
+                const tbody = document.getElementById('backends-body');
+
+                // Load Distribution = share of TOTAL traffic (not relative to
+                // the busiest backend). With WRR 3:1:1:1 you should see ~50 %
+                // for backend1 and ~16.7 % for the other three; with RR you
+                // should see ~25 % each. Relative-to-max would always pin the
+                // top backend at 100 % which is uninformative.
+                let sumTotal = 0;
+                data.backends.forEach(b => { sumTotal += b.stats.total_connections; });
+                if (sumTotal < 1) sumTotal = 1; // avoid div/0 before any traffic
+
+                // Drop rows for backends that no longer exist (defensive — the
+                // set is static today, but cheap).
+                const liveAddrs = new Set(data.backends.map(b => b.addr));
+                for (const [addr, st] of rowState) {
+                    if (!liveAddrs.has(addr)) {
+                        st.tr.remove();
+                        rowState.delete(addr);
+                    }
+                }
+
+                const newPerBackend = {};
+                data.backends.forEach(b => {
+                    const isOffline = b.weight === 0;
+                    let reason = 'ONLINE';
+                    if (isOffline) {
+                        if (b.healthy === false) reason = 'OFFLINE (health)';
+                        else if (b.intent_weight === 0) reason = 'OFFLINE (disabled)';
+                        else reason = 'OFFLINE';
+                    }
+                    const percent = (b.stats.total_connections / sumTotal) * 100;
+
+                    let bCps = 0;
+                    if (prev && prev.perBackend[b.addr]) {
+                        const dt = (now - prev.ts) / 1000;
+                        if (dt > 0) {
+                            bCps = Math.max(0, Math.round((b.stats.total_connections - prev.perBackend[b.addr].conns) / dt));
+                        }
+                    }
+                    newPerBackend[b.addr] = {
+                        conns: b.stats.total_connections,
+                        bytes: b.stats.bytes_transferred,
+                    };
+
+                    const intent = (typeof b.intent_weight === 'number') ? b.intent_weight : b.weight;
+
+                    // First time we see this backend: build the row skeleton
+                    // with cells we can target by id. After that, only the
+                    // text content is patched — the <input> survives polls.
+                    let st = rowState.get(b.addr);
+                    if (!st) {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><span class="live-dot"></span><span class="status-text"></span></td>
+                            <td style="font-weight: bold; color: #fff;" class="addr-cell"></td>
+                            <td>
+                                <input type="number" class="weight-input" min="0" max="100" step="1" />
+                                <span class="save-mark"></span>
+                            </td>
+                            <td class="health-cell"></td>
+                            <td class="active-cell"></td>
+                            <td class="cps-cell"></td>
+                            <td class="total-cell"></td>
+                            <td class="bytes-cell"></td>
+                            <td style="width: 200px;">
+                                <div class="pct-text" style="font-size: 0.8em; text-align: right;"></div>
+                                <div class="chart-bar"><div class="chart-fill"></div></div>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+
+                        const input = tr.querySelector('.weight-input');
+                        const mark = tr.querySelector('.save-mark');
+                        tr.querySelector('.addr-cell').textContent = b.addr;
+
+                        // We track the *last edit time* (not focus) so that
+                        // clicking the input and walking away doesn't freeze
+                        // the cell forever. If you stop typing, after the
+                        // edit lockout window the server value takes over —
+                        // critical for "redis-cli changes must show up here".
+                        const EDIT_LOCKOUT_MS = 2000;
+                        let lastEditAt = 0;
+                        const markEdit = () => { lastEditAt = performance.now(); };
+
+                        // Debounced commit: many ticks of the number arrow
+                        // should result in one POST, not twenty.
+                        let debounce = null;
+                        const schedule = () => {
+                            markEdit();
+                            clearTimeout(debounce);
+                            debounce = setTimeout(() => {
+                                const v = Math.max(0, Math.min(100, Number(input.value)|0));
+                                commitWeight(b.addr, v, mark);
+                            }, 350);
+                        };
+                        input.addEventListener('input', schedule);
+                        input.addEventListener('keydown', ev => {
+                            markEdit();
+                            if (ev.key === 'Enter') {
+                                clearTimeout(debounce);
+                                const v = Math.max(0, Math.min(100, Number(input.value)|0));
+                                commitWeight(b.addr, v, mark);
+                                input.blur();
+                            }
+                        });
+
+                        st = { tr, input, mark, getLastEdit: () => lastEditAt };
+                        rowState.set(b.addr, st);
+                    }
+
+                    // Patch dynamic cells — never replace the row.
+                    const dot = st.tr.querySelector('.live-dot');
+                    dot.classList.toggle('offline', isOffline);
+                    st.tr.querySelector('.status-text').textContent = reason;
+
+                    // Sync the input from the server unless the user is
+                    // actively editing (typed something in the last 2 s).
+                    // Pure focus check fails when the user clicks-and-leaves —
+                    // they keep focus, but they're not actively typing.
+                    const sinceEdit = performance.now() - st.getLastEdit();
+                    if (sinceEdit > 2000 && Number(st.input.value) !== intent) {
+                        st.input.value = intent;
+                    }
+
+                    const hc = st.tr.querySelector('.health-cell');
+                    if (b.healthy === false) {
+                        hc.innerHTML = '<span style="color:var(--danger);">DOWN</span>';
+                    } else {
+                        hc.innerHTML = '<span style="color:var(--primary-accent);">UP</span>';
+                    }
+                    st.tr.querySelector('.active-cell').textContent = b.stats.active_connections;
+                    st.tr.querySelector('.cps-cell').textContent = bCps;
+                    st.tr.querySelector('.total-cell').textContent = b.stats.total_connections;
+                    st.tr.querySelector('.bytes-cell').textContent = formatBytes(b.stats.bytes_transferred);
+                    // 1 decimal — needed because at WRR 3:1:1:1 the small backends
+                    // sit at 16.7 %, which rounds to "17 %" and hides the precision.
+                    st.tr.querySelector('.pct-text').textContent = `${percent.toFixed(1)}%`;
+                    const fill = st.tr.querySelector('.chart-fill');
+                    fill.style.width = `${percent}%`;
+                    fill.style.backgroundColor = isOffline ? 'var(--danger)' : 'var(--primary-accent)';
+                });
+
+                // Save current sample for next delta computation.
+                prev = {
+                    ts: now,
+                    totalConns: data.global.total_connections,
+                    totalBytes: data.global.bytes_transferred,
+                    perBackend: newPerBackend,
+                };
+            } catch (err) {
+                console.error("Failed to fetch telemetry", err);
+            }
+        }
+
+        // Poll at 500ms — gives smooth ~2 samples/sec RPS estimate.
+        setInterval(fetchTelemetry, 500);
+        fetchTelemetry();
+    </script>
+</body>
+</html>

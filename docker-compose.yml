@@ -1,0 +1,72 @@
+services:
+  lb:
+    build: .
+    command: load_balancer_l4
+    ports:
+      - "8080:8080"
+      - "3000:3000"
+    environment:
+      - LISTEN_ADDR=0.0.0.0:8080
+      - BACKENDS=backend1:8081,backend2:8082,backend3:8083,backend4:8084
+      - WEIGHTS=3,1,1,1
+      - ALGORITHM=2 # Uses Weighted Round Robin
+      - REDIS_URL=redis://redis:6379/
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+      - backend4
+      - redis
+    mem_limit: 256m
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    mem_limit: 128m
+    restart: unless-stopped
+
+  backend1:
+    build: .
+    command: backend
+    environment:
+      - PORT=8081
+    mem_limit: 64m
+    restart: unless-stopped
+
+  backend2:
+    build: .
+    command: backend
+    environment:
+      - PORT=8082
+    mem_limit: 64m
+    restart: unless-stopped
+
+  backend3:
+    build: .
+    command: backend
+    environment:
+      - PORT=8083
+    mem_limit: 64m
+    restart: unless-stopped
+
+  backend4:
+    build: .
+    command: backend
+    environment:
+      - PORT=8084
+    mem_limit: 64m
+    restart: unless-stopped
+
+  health_checker:
+    build: .
+    command: health_checker
+    environment:
+      - BACKENDS=backend1:8081,backend2:8082,backend3:8083,backend4:8084
+      - WEIGHTS=3,1,1,1
+      - REDIS_URL=redis://redis:6379/
+    depends_on:
+      - redis
+    mem_limit: 64m
+    restart: unless-stopped
