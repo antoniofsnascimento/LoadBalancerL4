@@ -528,7 +528,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::spawn(async move {
         let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-        println!("Web Dashboard running at http://0.0.0.0:3000");
+        println!("Web Dashboard running at http://localhost:3000");
         axum::serve(listener, app).await.unwrap();
     });
 
