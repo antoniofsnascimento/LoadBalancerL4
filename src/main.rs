@@ -2,9 +2,9 @@ use load_balancer_l4::balancer::{Algorithm, LoadBalancer}; // Imports Algorithm 
 use load_balancer_l4::models::Backend; // Imports the Backend struct, which represents a backend server with its address and weight
 use load_balancer_l4::proxy::handle_connection; // The core of L4 proxy engine: imports this function to spwan it when a new TCP connection arrives
 use load_balancer_l4::telemetry::Telemetry; // Central metrics scoreboard: imports the Telemetry struct that holds all the counters and stats for the dashboard
-use std::io::{self, Write}; 
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::io::{self, Write}; // For interactive menu input and output flushing (ensures prompt appears before input)
+use std::sync::Arc; // For thread-safe reference counting of shared state (LoadBalancer and Telemetry) across async tasks
+use std::sync::atomic::Ordering; // For specifying memory ordering when updating atomic counters in Telemetry (Relaxed is sufficient for our use case)
 use tokio::net::TcpListener; // tokio provides async TPC sockets for the actual load balancer
     
 use axum::{ // builds the HTTP dashboard API
@@ -18,24 +18,24 @@ use serde::{Deserialize, Serialize};
 
 /// Defensive upper bound for operator-supplied weights. Above ~20 the practical
 /// effect on the distribution is invisible, so 100 is plenty of headroom.
-const MAX_WEIGHT: u32 = 100;
+const MAX_WEIGHT: u32 = 100; // This is a sanity check to prevent a UI bug or a misguided script from
 
-#[derive(Serialize)]
-struct GlobalStats {
+#[derive(Serialize)] // For serializing the telemetry response to JSON for the dashboard
+struct GlobalStats { // Aggregated metrics across all backends, shown in the dashboard header
     active_connections: usize,
     total_connections: usize,
     bytes_transferred: usize,
 }
 
-#[derive(Serialize)]
-struct BackendStatData {
+#[derive(Serialize)] // For serializing individual backend data in the telemetry response
+struct BackendStatData { // Metrics specific to each backend, shown in the dashboard's backend table
     active_connections: usize,
     total_connections: usize,
     bytes_transferred: usize,
 }
 
-#[derive(Serialize)]
-struct BackendData {
+#[derive(Serialize)] // For serializing the backend data in the telemetry response  
+struct BackendData { // Represents the state of each backend as shown in the dashboard, combining static info (address) with dynamic state (weights, health, stats)
     addr: String,
     /// Effective routing weight (what build_virtual_indices used).
     /// Equal to user_weight × health. 0 means out of rotation.
@@ -48,8 +48,8 @@ struct BackendData {
     stats: BackendStatData,
 }
 
-#[derive(Serialize)]
-struct TelemetryResponse {
+#[derive(Serialize)] // For serializing the entire telemetry response, which includes global stats and a list of backends, for the dashboard API
+struct TelemetryResponse { // The full payload returned by GET /api/telemetry, which the dashboard consumes to display the current state of the load balancer and its backends
     algorithm: String,
     global: GlobalStats,
     backends: Vec<BackendData>,
@@ -81,16 +81,16 @@ struct AppState {
     default_algorithm: Algorithm,
 }
 
-async fn serve_dashboard() -> Html<&'static str> {
+async fn serve_dashboard() -> Html<&'static str> { // Serves the static HTML dashboard. The HTML file is included at compile time, so this is a zero-cost operation that doesn't hit the filesystem at runtime. 
     Html(include_str!("dashboard.html"))
 }
 
-async fn health() -> &'static str {
-    "ok"
+async fn health() -> &'static str { // Simple health check endpoint for Kubernetes or load testing tools. Always returns 200 OK with a plain "ok" body, since this LB doesn't have any internal state that would cause it to be unhealthy.
+    "ok" 
 }
 
-async fn get_telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {
-    let global = GlobalStats {
+async fn get_telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> { // Handler for GET /api/telemetry, which the dashboard calls to get the current state of the load balancer and its backends. It reads from the shared Telemetry and Redis state to construct a snapshot of the global stats and per-backend data, then returns it as JSON.
+    let global = GlobalStats { 
         active_connections: state
             .telemetry
             .total_active_connections
@@ -105,17 +105,17 @@ async fn get_telemetry(State(state): State<AppState>) -> Json<TelemetryResponse>
             .load(Ordering::Relaxed),
     };
 
-    let mut backends = Vec::new();
+    let mut backends = Vec::new(); // Build the list of backends for the response by combining data from the LoadBalancer (static info and effective weights) with the latest snapshot from Redis (intent weights and health) and the Telemetry stats. This allows the dashboard to show a comprehensive view of each backend's state.
     let redis_snapshot = state.redis_state.read().unwrap().clone();
     for (id, backend) in state.balancer.backends().iter().enumerate() {
         let stats = &state.telemetry.backend_stats[id];
         let rs = redis_snapshot.get(id).cloned().unwrap_or_default();
-        backends.push(BackendData {
+        backends.push(BackendData { // Construct the BackendData for this backend, which includes:
             addr: backend.addr.clone(),
             weight: backend.weight, // effective (already intent×health)
             intent_weight: rs.intent_weight,
             healthy: rs.healthy,
-            stats: BackendStatData {
+            stats: BackendStatData { // Convert atomic counters to plain usize for the response
                 active_connections: stats.active_connections.load(Ordering::Relaxed),
                 total_connections: stats.total_connections.load(Ordering::Relaxed),
                 bytes_transferred: stats.bytes_transferred.load(Ordering::Relaxed),
@@ -170,29 +170,29 @@ async fn set_weight(
     // Validate addr — must be one of the loaded backends. This stops the UI
     // (or a misguided script) from polluting Redis with stale `weight:foo`
     // keys for non-existent nodes.
-    let known: bool = state.balancer.backends().iter().any(|b| b.addr == req.addr);
+    let known: bool = state.balancer.backends().iter().any(|b| b.addr == req.addr); // Check if the provided address matches any of the known backends in the LoadBalancer. This is a safeguard to prevent setting weights for unknown backends, which could indicate a typo in the dashboard or an attempt to manipulate Redis directly with invalid keys. If the address is not recognized, we return a 404 Not Found error to the dashboard.
     if !known {
         return Err(err(StatusCode::NOT_FOUND, format!("unknown backend {}", req.addr)));
     }
 
-    let mut con = state
+    let mut con = state // Get a multiplexed connection from the shared Redis client. This is an async operation that may fail if Redis is unavailable, in which case we return a 503 Service Unavailable error to the dashboard.
         .redis_client
         .get_multiplexed_tokio_connection()
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, format!("redis: {e}")))?;
 
-    let key = format!("weight:{}", req.addr);
-    let _: () = redis::cmd("SET")
+    let key = format!("weight:{}", req.addr); // Construct the Redis key for this backend's weight based on its address. This is the key that the polling loop watches to update the balancer's state.
+    let _: () = redis::cmd("SET") // Issue the Redis command to set the new weight for this backend. The polling loop will pick up this change and update the LoadBalancer's effective weights on the next iteration (within 1 second). If the Redis command fails, we return a 503 Service Unavailable error to the dashboard.
         .arg(&key)
         .arg(req.weight)
         .query_async(&mut con)
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, format!("redis SET: {e}")))?;
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT) // Return 204 No Content on success, since the dashboard doesn't need any data back from this request.
 }
 
-async fn set_algorithm(
+async fn set_algorithm( // Handler for POST /api/algorithm, which allows the dashboard to change the load balancing algorithm at runtime. It writes the new algorithm to Redis, and the polling loop will detect this change and update the LoadBalancer's algorithm accordingly. This decouples the HTTP API from the balancer's internal state management, ensuring thread safety and consistency.
     State(state): State<AppState>,
     Json(req): Json<SetAlgorithmReq>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
