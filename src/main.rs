@@ -1,13 +1,13 @@
-use load_balancer_l4::balancer::{Algorithm, LoadBalancer};
-use load_balancer_l4::models::Backend;
-use load_balancer_l4::proxy::handle_connection;
-use load_balancer_l4::telemetry::Telemetry;
-use std::io::{self, Write};
+use load_balancer_l4::balancer::{Algorithm, LoadBalancer}; // Imports Algorithm (enum with RR and WRR) and LoadBalancer (structure managing the backend pool) from the balancer module
+use load_balancer_l4::models::Backend; // Imports the Backend struct, which represents a backend server with its address and weight
+use load_balancer_l4::proxy::handle_connection; // The core of L4 proxy engine: imports this function to spwan it when a new TCP connection arrives
+use load_balancer_l4::telemetry::Telemetry; // Central metrics scoreboard: imports the Telemetry struct that holds all the counters and stats for the dashboard
+use std::io::{self, Write}; 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use tokio::net::TcpListener;
+use tokio::net::TcpListener; // tokio provides async TPC sockets for the actual load balancer
     
-use axum::{
+use axum::{ // builds the HTTP dashboard API
     Json, Router,
     extract::State,
     http::StatusCode,

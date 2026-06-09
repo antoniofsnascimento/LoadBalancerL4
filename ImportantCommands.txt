@@ -2,46 +2,57 @@
           LOAD BALANCER L4 - COMANDOS DE CONTROLO PARA A DEFESA
 ===============================================================================
 
---- 1. PREPARAÇÃO DO AMBIENTE (DOCKER) ---
-# Compilar imagens e subir os nós de backend + Redis em segundo plano (detached)
+--- 1. PREPARAÇÃO E EXECUÇÃO DO AMBIENTE TOTAL (DOCKER) ---
+# Compilar imagens e subir toda a infraestrutura (Load Balancer, Watchdog, Backends e Redis) em segundo plano
 docker-compose up --build -d
-
-# Validar se todos os contentores estão ativos e verificar mapeamento de portas
+# Validar se todos os 7 contentores estão ativos e verificar o mapeamento de portas
 docker-compose ps
 
---- 2. COMPILAÇÃO E EXECUÇÃO DO MOTOR (RUST) ---
-# Limpar resíduos de compilações anteriores
-cargo clean
+--- 2. MONITORIZAÇÃO E ACESSO AO DASHBOARD ---
+# Toda a infraestrutura está isolada no Docker. 
+# Aceder ao Dashboard Web de Telemetria no browser através do link:
+# -> http://localhost:3000
 
-# Compilar e executar o Load Balancer no MODO RELEASE (Alta Performance Ativada)
-cargo run --release
-
---- 3. MONITORIZAÇÃO COMPUTAÇÃO EM REAL-TIME ---
-# Abrir num terminal secundário para provar o isolamento de hardware (cgroups)
+# Abrir num terminal secundário para provar o isolamento de hardware e recursos (cgroups)
 docker stats
 
---- 4. SIMULAÇÃO DE CARGA E STRESS TESTING ---
-# Executar o cliente de teste com parâmetros rigorosos:
-# Parâmetros: <DURAÇÃO_SEGUNDOS> <CONEXÕES_CONCORRENTES> <TIMEOUT_MS>
-# Exemplo base para demonstração estável (500 conexões):
+--- 3. SIMULAÇÃO DE CARGA E STRESS TESTING ---
+
+# Teste durante 300s com 500 pedidos/s e ligações simultâneas até 200/s (para não esgotar as portas)
 cargo run --release --bin test_client -- 300 500 200
 
---- 5. INTERAÇÃO DINÂMICA VIA REDIS (HOT-RELOAD UI) ---
+#OU
+
+# Executar o cliente de teste simples (60 pedidos para validar a matemática da distribuição dos pesos):
+cargo run --release --bin test_client
+
+# Executar o motor de teste de carga extrema (10.000 ligações concorrentes assíncronas para testar a robustez):
+cargo run --release --bin load_tester
+
+--- 4. INTERAÇÃO DINÂMICA E TESTE DO WATCHDOG (HOT-RELOAD) ---
+# [Cenário A] Alteração manual de pesos e capacidade em tempo real via Redis:
 # Aceder à linha de comandos interativa do contentor Redis
 docker exec -it loadbalancerl4-redis-1 redis-cli
 
-# Comandos Úteis dentro do Redis CLI:
-# -> Alterar algoritmo para Weighted Round-Robin:
-SET lb:algorithm wrr
-# -> Alterar peso do backend1 para capacidade máxima:
+# -> Aumentar o peso do backend1 para receber 10 vezes mais tráfego (Peso = 10):
 SET weight:127.0.0.1:8081 10
-# -> Retirar o backend2 da rotação do tráfego (Peso 0):
-SET weight:127.0.0.1:8082 0
+# -> Sair do Redis
+exit
 
---- 6. PROCEDIMENTOS DE LIMPEZA E RESET EM CASO DE FALHA ---
-# Derrubar a infraestrutura eliminando volumes e dados efêmeros do Redis
+# [Cenário B] Demonstração de Alta Disponibilidade (Simulação de Quebra de Nó):
+# Simular uma falha catastrófica do Backend 2 (desligar a "máquina"):
+docker stop loadbalancerl4-backend2-1
+
+# -> (Mostrar o Dashboard: O Watchdog atua em menos de 2 segundos, o nó fica OFFLINE, 
+# o peso desce para 0, e o tráfego é bloqueado e desviado em segurança.)
+
+# Recuperar o nó e observar o Watchdog a reintegrá-lo na rede automaticamente:
+docker start loadbalancerl4-backend2-1
+
+--- 5. PROCEDIMENTOS DE LIMPEZA E RESET ---
+# Derrubar a infraestrutura, eliminando volumes e dados efêmeros do Redis
 docker-compose down -v --remove-orphans
 
-# Forçar o encerramento de processos zombies que prendam os portos críticos
+# (Apenas em caso de emergência) Forçar o encerramento de processos zombies que fiquem presos na memória do Mac
 lsof -ti tcp:8080,3000,6379,8081,8082,8083,8084 | xargs kill -9
 ===============================================================================
